@@ -1,14 +1,16 @@
 package storage
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/containers/storage/pkg/stringid"
+	"github.com/pkg/errors"
+
+	"golang.org/x/sys/unix"
 )
 
 // A Locker represents a file lock where the file is used to cache an
@@ -30,10 +32,11 @@ type Locker interface {
 }
 
 type lockfile struct {
-	mu   sync.Mutex
-	file string
-	fd   uintptr
-	lw   string
+	mu       sync.Mutex
+	file     string
+	fd       uintptr
+	lw       string
+	locktype int16
 }
 
 var (
@@ -41,7 +44,7 @@ var (
 	lockfilesLock sync.Mutex
 )
 
-// GetLockfile opens a lock file, creating it if necessary.  The Locker object
+// GetLockfile opens a read/write lock file, creating it if necessary.  The Locker object
 // return will be returned unlocked.
 func GetLockfile(path string) (Locker, error) {
 	lockfilesLock.Lock()
@@ -49,22 +52,52 @@ func GetLockfile(path string) (Locker, error) {
 	if lockfiles == nil {
 		lockfiles = make(map[string]*lockfile)
 	}
-	if locker, ok := lockfiles[filepath.Clean(path)]; ok {
+	cleanPath := filepath.Clean(path)
+	if locker, ok := lockfiles[cleanPath]; ok {
+		if !locker.RWLock() {
+			return nil, fmt.Errorf("Lock %q is a Read/Only lock", cleanPath)
+		}
 		return locker, nil
 	}
-	fd, err := unix.Open(filepath.Clean(path), os.O_RDWR|os.O_CREATE, unix.S_IRUSR|unix.S_IWUSR)
+	fd, err := unix.Open(cleanPath, os.O_RDWR|os.O_CREATE, unix.S_IRUSR|unix.S_IWUSR)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "Error opening %q", cleanPath)
 	}
 	unix.CloseOnExec(fd)
-	locker := &lockfile{file: path, fd: uintptr(fd), lw: stringid.GenerateRandomID()}
+	locker := &lockfile{file: path, fd: uintptr(fd), lw: stringid.GenerateRandomID(), locktype: unix.F_WRLCK}
 	lockfiles[filepath.Clean(path)] = locker
 	return locker, nil
 }
 
+// GetROLockfile opens a read/only lock file.  The Locker object
+// return will be returned unlocked.
+func GetROLockfile(path string) (Locker, error) {
+	lockfilesLock.Lock()
+	defer lockfilesLock.Unlock()
+	if lockfiles == nil {
+		lockfiles = make(map[string]*lockfile)
+	}
+	cleanPath := filepath.Clean(path)
+	if locker, ok := lockfiles[cleanPath]; ok {
+		if locker.RWLock() {
+			return nil, fmt.Errorf("Lock %q is a Read/Write lock", cleanPath)
+		}
+		return locker, nil
+	}
+	fd, err := unix.Open(cleanPath, os.O_RDONLY, 0)
+	if err != nil {
+		return nil, errors.Wrapf(err, "Error opening %q", cleanPath)
+	}
+	unix.CloseOnExec(fd)
+	locker := &lockfile{file: path, fd: uintptr(fd), lw: stringid.GenerateRandomID(), locktype: unix.F_RDLCK}
+	lockfiles[filepath.Clean(path)] = locker
+	return locker, nil
+}
+
+// Lock locks the lock file
 func (l *lockfile) Lock() {
 	lk := unix.Flock_t{
-		Type:   unix.F_WRLCK,
+		Type:   l.locktype,
 		Whence: int16(os.SEEK_SET),
 		Start:  0,
 		Len:    0,
@@ -76,6 +109,7 @@ func (l *lockfile) Lock() {
 	}
 }
 
+// Unlock unlocks the lock file
 func (l *lockfile) Unlock() {
 	lk := unix.Flock_t{
 		Type:   unix.F_UNLCK,
@@ -90,6 +124,7 @@ func (l *lockfile) Unlock() {
 	l.mu.Unlock()
 }
 
+// Touch updates the lock file with the UID of the user
 func (l *lockfile) Touch() error {
 	l.lw = stringid.GenerateRandomID()
 	id := []byte(l.lw)
@@ -111,6 +146,7 @@ func (l *lockfile) Touch() error {
 	return nil
 }
 
+// Modified indicates if the lock file has been updated since the last time it was loaded
 func (l *lockfile) Modified() (bool, error) {
 	id := []byte(l.lw)
 	_, err := unix.Seek(int(l.fd), 0, os.SEEK_SET)
@@ -129,6 +165,7 @@ func (l *lockfile) Modified() (bool, error) {
 	return l.lw != lw, nil
 }
 
+// TouchedSince indicates if the lock file has been touched since the specified time
 func (l *lockfile) TouchedSince(when time.Time) bool {
 	st := unix.Stat_t{}
 	err := unix.Fstat(int(l.fd), &st)
@@ -137,4 +174,9 @@ func (l *lockfile) TouchedSince(when time.Time) bool {
 	}
 	touched := time.Unix(statTMtimeUnix(st))
 	return when.Before(touched)
+}
+
+// RWLock indicates if the lock file is a read/write lock
+func (l *lockfile) RWLock() bool {
+	return (l.locktype == unix.F_WRLCK)
 }

@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	drivers "github.com/containers/storage/drivers"
@@ -299,6 +300,9 @@ func newLayerStore(rundir string, layerdir string, driver drivers.Driver) (Layer
 		return nil, err
 	}
 	lockfile, err := GetLockfile(filepath.Join(layerdir, "layers.lock"))
+	if err == syscall.EROFS {
+		lockfile, err = GetROLockfile(filepath.Join(layerdir, "layers.lock"))
+	}
 	if err != nil {
 		return nil, err
 	}

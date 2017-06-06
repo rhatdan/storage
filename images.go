@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/containers/storage/pkg/ioutils"
@@ -167,6 +168,9 @@ func newImageStore(dir string) (ImageStore, error) {
 		return nil, err
 	}
 	lockfile, err := GetLockfile(filepath.Join(dir, "images.lock"))
+	if err == syscall.EROFS {
+		lockfile, err = GetROLockfile(filepath.Join(dir, "images.lock"))
+	}
 	if err != nil {
 		return nil, err
 	}
