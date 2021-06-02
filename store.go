@@ -937,7 +937,7 @@ func (s *store) ContainerStore() (ContainerStore, error) {
 }
 
 func (s *store) canUseShifting(uidmap, gidmap []idtools.IDMap) bool {
-	if !s.graphDriver.SupportsShifting() {
+	if s.graphDriver == nil || !s.graphDriver.SupportsShifting() {
 		return false
 	}
 	if uidmap != nil && !idtools.IsContiguous(uidmap) {
