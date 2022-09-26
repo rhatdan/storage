@@ -4,7 +4,7 @@ module github.com/containers/storage
 
 require (
 	github.com/BurntSushi/toml v0.3.1
-	github.com/Microsoft/go-winio v0.5.0
+	github.com/Microsoft/go-winio v0.6.0
 	github.com/Microsoft/hcsshim v0.8.20
 	github.com/docker/go-units v0.4.0
 	github.com/google/go-intervals v0.0.2
@@ -26,7 +26,7 @@ require (
 	github.com/tchap/go-patricia v2.3.0+incompatible
 	github.com/ulikunitz/xz v0.5.10
 	github.com/vbatts/tar-split v0.11.1
-	golang.org/x/net v0.0.0-20210226172049-e18ecbb05110
-	golang.org/x/sys v0.0.0-20210426230700-d19ff857e887
+	golang.org/x/net v0.0.0-20220722155237-a158d28d115b
+	golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f
 	gotest.tools v2.2.0+incompatible
 )
