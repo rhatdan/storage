@@ -19,6 +19,7 @@ func (e *fastEncL1) Encode(dst *tokens, src []byte) {
 	const (
 		inputMargin            = 12 - 1
 		minNonLiteralBlockSize = 1 + 1 + inputMargin
+		hashBytes              = 5
 	)
 	if debugDeflate && e.cur < 0 {
 		panic(fmt.Sprint("e.cur < 0: ", e.cur))
@@ -68,7 +69,7 @@ func (e *fastEncL1) Encode(dst *tokens, src []byte) {
 	sLimit := int32(len(src) - inputMargin)
 
 	// nextEmit is where in src the next emitLiteral should start from.
-	cv := load3232(src, s)
+	cv := load6432(src, s)
 
 	for {
 		const skipLog = 5
@@ -77,7 +78,7 @@ func (e *fastEncL1) Encode(dst *tokens, src []byte) {
 		nextS := s
 		var candidate tableEntry
 		for {
-			nextHash := hash(cv)
+			nextHash := hashLen(cv, tableBits, hashBytes)
 			candidate = e.table[nextHash]
 			nextS = s + doEvery + (s-nextEmit)>>skipLog
 			if nextS > sLimit {
@@ -86,16 +87,16 @@ func (e *fastEncL1) Encode(dst *tokens, src []byte) {
 
 			now := load6432(src, nextS)
 			e.table[nextHash] = tableEntry{offset: s + e.cur}
-			nextHash = hash(uint32(now))
+			nextHash = hashLen(now, tableBits, hashBytes)
 
 			offset := s - (candidate.offset - e.cur)
-			if offset < maxMatchOffset && cv == load3232(src, candidate.offset-e.cur) {
+			if offset < maxMatchOffset && uint32(cv) == load3232(src, candidate.offset-e.cur) {
 				e.table[nextHash] = tableEntry{offset: nextS + e.cur}
 				break
 			}
 
 			// Do one right away...
-			cv = uint32(now)
+			cv = now
 			s = nextS
 			nextS++
 			candidate = e.table[nextHash]
@@ -103,11 +104,11 @@ func (e *fastEncL1) Encode(dst *tokens, src []byte) {
 			e.table[nextHash] = tableEntry{offset: s + e.cur}
 
 			offset = s - (candidate.offset - e.cur)
-			if offset < maxMatchOffset && cv == load3232(src, candidate.offset-e.cur) {
+			if offset < maxMatchOffset && uint32(cv) == load3232(src, candidate.offset-e.cur) {
 				e.table[nextHash] = tableEntry{offset: nextS + e.cur}
 				break
 			}
-			cv = uint32(now)
+			cv = now
 			s = nextS
 		}
 
@@ -154,7 +155,15 @@ func (e *fastEncL1) Encode(dst *tokens, src []byte) {
 				l++
 			}
 			if nextEmit < s {
-				emitLiteral(dst, src[nextEmit:s])
+				if false {
+					emitLiteral(dst, src[nextEmit:s])
+				} else {
+					for _, v := range src[nextEmit:s] {
+						dst.tokens[dst.n] = token(v)
+						dst.litHist[v]++
+						dst.n++
+					}
+				}
 			}
 
 			// Save the match found
@@ -169,8 +178,11 @@ func (e *fastEncL1) Encode(dst *tokens, src []byte) {
 				for xlength > 0 {
 					xl := xlength
 					if xl > 258 {
-						// We need to have at least baseMatchLength left over for next loop.
-						xl = 258 - baseMatchLength
+						if xl > 258+baseMatchLength {
+							xl = 258
+						} else {
+							xl = 258 - baseMatchLength
+						}
 					}
 					xlength -= xl
 					xl -= baseMatchLength
@@ -187,9 +199,9 @@ func (e *fastEncL1) Encode(dst *tokens, src []byte) {
 			}
 			if s >= sLimit {
 				// Index first pair after match end.
-				if int(s+l+4) < len(src) {
-					cv := load3232(src, s)
-					e.table[hash(cv)] = tableEntry{offset: s + e.cur}
+				if int(s+l+8) < len(src) {
+					cv := load6432(src, s)
+					e.table[hashLen(cv, tableBits, hashBytes)] = tableEntry{offset: s + e.cur}
 				}
 				goto emitRemainder
 			}
@@ -202,16 +214,16 @@ func (e *fastEncL1) Encode(dst *tokens, src []byte) {
 			// three load32 calls.
 			x := load6432(src, s-2)
 			o := e.cur + s - 2
-			prevHash := hash(uint32(x))
+			prevHash := hashLen(x, tableBits, hashBytes)
 			e.table[prevHash] = tableEntry{offset: o}
 			x >>= 16
-			currHash := hash(uint32(x))
+			currHash := hashLen(x, tableBits, hashBytes)
 			candidate = e.table[currHash]
 			e.table[currHash] = tableEntry{offset: o + 2}
 
 			offset := s - (candidate.offset - e.cur)
 			if offset > maxMatchOffset || uint32(x) != load3232(src, candidate.offset-e.cur) {
-				cv = uint32(x >> 8)
+				cv = x >> 8
 				s++
 				break
 			}
