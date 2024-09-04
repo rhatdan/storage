@@ -103,32 +103,32 @@ func isWriteableOnlyByOwner(perm os.FileMode) bool {
 
 // GetConfigHome returns XDG_CONFIG_HOME.
 // GetConfigHome returns $HOME/.config and nil error if XDG_CONFIG_HOME is not set.
-//
+// As a side effect GetConfigHome will attempt to create the ConfigHome dir
+// if it does not exist.
 // See also https://standards.freedesktop.org/basedir-spec/latest/ar01s03.html
 func GetConfigHome() (string, error) {
 	rootlessConfigHomeDirOnce.Do(func() {
-		cfgHomeDir := os.Getenv("XDG_CONFIG_HOME")
-		if cfgHomeDir == "" {
+		tmpDir := os.Getenv("XDG_CONFIG_HOME")
+		if tmpDir == "" {
 			home := Get()
 			resolvedHome, err := filepath.EvalSymlinks(home)
 			if err != nil {
 				rootlessConfigHomeDirError = fmt.Errorf("cannot resolve %s: %w", home, err)
 				return
 			}
-			tmpDir := filepath.Join(resolvedHome, ".config")
-			_ = os.MkdirAll(tmpDir, 0o700)
-			st, err := os.Stat(tmpDir)
-			if err != nil {
-				rootlessConfigHomeDirError = err
-				return
-			} else if int(st.Sys().(*syscall.Stat_t).Uid) == os.Geteuid() {
-				cfgHomeDir = tmpDir
-			} else {
-				rootlessConfigHomeDirError = fmt.Errorf("path %q exists and it is not owned by the current user", tmpDir)
-				return
-			}
+			tmpDir = filepath.Join(resolvedHome, ".config")
 		}
-		rootlessConfigHomeDir = cfgHomeDir
+		_ = os.MkdirAll(tmpDir, 0o700)
+		st, err := os.Stat(tmpDir)
+		if err != nil {
+			rootlessConfigHomeDirError = err
+			return
+		} else if int(st.Sys().(*syscall.Stat_t).Uid) == os.Geteuid() {
+			rootlessConfigHomeDir = tmpDir
+		} else {
+			rootlessConfigHomeDirError = fmt.Errorf("path %q exists and it is not owned by the current user", tmpDir)
+			return
+		}
 	})
 
 	return rootlessConfigHomeDir, rootlessConfigHomeDirError
